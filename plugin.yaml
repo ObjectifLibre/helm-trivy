@@ -1,0 +1,13 @@
+name: "trivy"
+version: "1.0.0"
+usage: "Check images in your charts for vulnerabilities"
+description: |-
+  "Test your helm charts' docker images with trivy"
+command: "$HELM_PLUGIN_DIR/scripts/run.sh"
+
+hooks:
+  install: "cd $HELM_PLUGIN_DIR; ./scripts/install.sh"
+  update: "cd $HELM_PLUGIN_DIR; ./scripts/install.sh"
+
+ignoreFlags: false
+useTunnel: false
