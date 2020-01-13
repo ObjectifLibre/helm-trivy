@@ -3,15 +3,16 @@ package main
 import (
 	"bufio"
 	"flag"
+	"fmt"
 	"io/ioutil"
-	log "github.com/sirupsen/logrus"
-	"strings"
 	"os"
 	"os/exec"
+	"strings"
+
+	log "github.com/sirupsen/logrus"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/docker/client"
 	"golang.org/x/net/context"
 )
@@ -32,7 +33,7 @@ ScannerLoop:
 		image := strings.Split(line, "image: ")[1]
 		image = strings.Trim(image, "\"")
 		log.Debugf("Found image %v", image)
-		for _, v := range(images) {
+		for _, v := range images {
 			if v == image {
 				continue ScannerLoop
 			}
@@ -42,19 +43,20 @@ ScannerLoop:
 	return nil, images
 }
 
-func scanImage(image string, ctx context.Context, cli *client.Client, cacheDir string, json bool) (error) {
+func scanImage(image string, ctx context.Context, cli *client.Client, cacheDir string, json bool) string {
 	config := container.Config{
 		Image: "aquasec/trivy",
 		Cmd:   []string{},
-		Tty:   false,
+		Tty:   true,
+		User:  "1000",
 	}
 	if json {
-		config.Cmd = append(config.Cmd, "-f", "json")
+		config.Cmd = append(config.Cmd, "-q", "-f", "json", "--cache-dir", "/.cache")
 	}
 	config.Cmd = append(config.Cmd, image)
 	resp, err := cli.ContainerCreate(ctx, &config, &container.HostConfig{
 		Binds: []string{"/var/run/docker.sock:/var/run/docker.sock",
-		cacheDir+":/root/.cache/"},
+			cacheDir + ":/.cache"},
 	}, nil, "")
 	if err != nil {
 		log.Fatalf("Could not create trivy container: %v", err)
@@ -66,37 +68,45 @@ func scanImage(image string, ctx context.Context, cli *client.Client, cacheDir s
 	select {
 	case err := <-errCh:
 		if err != nil {
-			panic(err)
+			log.Fatalf("Error while waiting for container: %v", err)
 		}
 	case <-statusCh:
 	}
 
-	out, err := cli.ContainerLogs(ctx, resp.ID, types.ContainerLogsOptions{ShowStdout: true})
+	out, err := cli.ContainerLogs(ctx, resp.ID, types.ContainerLogsOptions{ShowStdout: true, ShowStderr: false})
 	if err != nil {
-		panic(err)
+		log.Fatalf("Cannot get container logs: %v", err)
 	}
-	log.Debugf("Showing container output")
-	stdcopy.StdCopy(os.Stdout, os.Stderr, out)
-	return nil
+	outputContent, _ := ioutil.ReadAll(out)
+	return string(outputContent)
 }
 
 func scanChart(chart string, json bool, ctx context.Context, cli *client.Client, cacheDir string) {
 	log.Infof("Scanning chart %s", chart)
+	jsonOutput := ""
 	if err, images := getChartImages(chart); err != nil {
-		log.Fatalf("Could not find images for chart %v: %v", chart, err)
+		log.Fatalf("Could not find images for chart %v: %v\nDid you run 'help update ?'", chart, err)
 	} else {
 		log.Debugf("Found images for chart %v: %v", chart, images)
-		for _, image := range(images) {
+		for _, image := range images {
 			log.Debugf("Scanning image %v", image)
-			scanImage(image, ctx, cli, cacheDir, json)
+			output := scanImage(image, ctx, cli, cacheDir, json)
+			if json {
+				jsonOutput += output
+			} else {
+				fmt.Println(output)
+			}
 		}
+	}
+	if json {
+		fmt.Println(strings.ReplaceAll(jsonOutput, "][", ","))
 	}
 }
 
 func main() {
 	var jsonOutput bool
 	var debug bool
-	charts := []string{}
+	var chart string
 
 	flag.BoolVar(&jsonOutput, "json", false, "Enable JSON output")
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
@@ -107,11 +117,12 @@ func main() {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	for _, v := range(os.Args[1:]) {
+	for _, v := range os.Args[1:] {
 		if strings.HasPrefix(v, "-") {
 			continue
 		}
-		charts = append(charts, v)
+		chart = v
+		break
 	}
 
 	ctx := context.Background()
@@ -124,8 +135,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Could not create cache dir: %v", err)
 	}
-	
-	for _, chart := range(charts) {
-		scanChart(chart, jsonOutput, ctx, cli, cacheDir)
-	}
+	log.Debugf("Using %v as cache directory for vuln db", cacheDir)
+
+	defer os.RemoveAll(cacheDir)
+
+	scanChart(chart, jsonOutput, ctx, cli, cacheDir)
 }
