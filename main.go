@@ -7,7 +7,9 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	log "github.com/sirupsen/logrus"
 
@@ -16,6 +18,8 @@ import (
 	"github.com/docker/docker/client"
 	"golang.org/x/net/context"
 )
+
+var debug = false
 
 func getChartImages(chart string) (error, []string) {
 	images := []string{}
@@ -46,21 +50,26 @@ ScannerLoop:
 func scanImage(image string, ctx context.Context, cli *client.Client, cacheDir string, json bool) string {
 	config := container.Config{
 		Image: "aquasec/trivy",
-		Cmd:   []string{},
+		Cmd:   []string{"--cache-dir", "/.cache"},
 		Tty:   true,
 		User:  "1000",
 	}
 	if json {
-		config.Cmd = append(config.Cmd, "-q", "-f", "json", "--cache-dir", "/.cache")
+		config.Cmd = append(config.Cmd, "-f", "json")
+	}
+	if debug {
+		config.Cmd = append(config.Cmd, "-d")
+	} else {
+		config.Cmd = append(config.Cmd, "-q")
 	}
 	config.Cmd = append(config.Cmd, image)
 	resp, err := cli.ContainerCreate(ctx, &config, &container.HostConfig{
-		Binds: []string{"/var/run/docker.sock:/var/run/docker.sock",
-			cacheDir + ":/.cache"},
+		Binds: []string{cacheDir + ":/.cache"},
 	}, nil, "")
 	if err != nil {
 		log.Fatalf("Could not create trivy container: %v", err)
 	}
+	log.Debugf("Starting container with command: %v", config.Cmd)
 	if err := cli.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
 		log.Fatalf("Could not start trivy container: %v", err)
 	}
@@ -105,12 +114,12 @@ func scanChart(chart string, json bool, ctx context.Context, cli *client.Client,
 
 func main() {
 	var jsonOutput bool
-	var debug bool
+	var noPull bool
 	var chart string
 
 	flag.BoolVar(&jsonOutput, "json", false, "Enable JSON output")
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
-
+	flag.BoolVar(&noPull, "nopull", false, "Don't pull latest trivy image")
 	flag.Parse()
 
 	if debug {
@@ -131,13 +140,29 @@ func main() {
 		log.Fatalf("Could not get docker client: %v", err)
 	}
 
+	if !noPull {
+		log.Info("Pulling latest trivy image")
+		_, err := cli.ImagePull(ctx, "aquasec/trivy:latest", types.ImagePullOptions{})
+		if err != nil {
+			panic(err)
+		}
+		log.Info("Pulled latest trivy image")
+	}
+
 	cacheDir, err := ioutil.TempDir("", "helm-trivy")
 	if err != nil {
 		log.Fatalf("Could not create cache dir: %v", err)
 	}
+	defer os.RemoveAll(cacheDir)
 	log.Debugf("Using %v as cache directory for vuln db", cacheDir)
 
-	defer os.RemoveAll(cacheDir)
+	go func(cacheDir string) {
+		sigCh := make(chan os.Signal)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		<-sigCh
+		os.RemoveAll(cacheDir)
+		os.Exit(0)
+	}(cacheDir)
 
 	scanChart(chart, jsonOutput, ctx, cli, cacheDir)
 }
