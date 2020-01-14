@@ -47,7 +47,7 @@ ScannerLoop:
 	return nil, images
 }
 
-func scanImage(image string, ctx context.Context, cli *client.Client, cacheDir string, json bool) string {
+func scanImage(image string, ctx context.Context, cli *client.Client, cacheDir string, json bool, trivyOpts string) string {
 	config := container.Config{
 		Image: "aquasec/trivy",
 		Cmd:   []string{"--cache-dir", "/.cache"},
@@ -62,6 +62,7 @@ func scanImage(image string, ctx context.Context, cli *client.Client, cacheDir s
 	} else {
 		config.Cmd = append(config.Cmd, "-q")
 	}
+	config.Cmd = append(config.Cmd, strings.Fields(trivyOpts)...)
 	config.Cmd = append(config.Cmd, image)
 	resp, err := cli.ContainerCreate(ctx, &config, &container.HostConfig{
 		Binds: []string{cacheDir + ":/.cache"},
@@ -90,16 +91,19 @@ func scanImage(image string, ctx context.Context, cli *client.Client, cacheDir s
 	return string(outputContent)
 }
 
-func scanChart(chart string, json bool, ctx context.Context, cli *client.Client, cacheDir string) {
+func scanChart(chart string, json bool, ctx context.Context, cli *client.Client, cacheDir string, trivyOpts string) {
 	log.Infof("Scanning chart %s", chart)
 	jsonOutput := ""
 	if err, images := getChartImages(chart); err != nil {
-		log.Fatalf("Could not find images for chart %v: %v\nDid you run 'help update ?'", chart, err)
+		log.Fatalf("Could not find images for chart %v: %v. Did you run 'helm repo update' ?", chart, err)
 	} else {
+		if len(images) == 0 {
+			log.Fatalf("No images found in chart %s.", chart)
+		}
 		log.Debugf("Found images for chart %v: %v", chart, images)
 		for _, image := range images {
 			log.Debugf("Scanning image %v", image)
-			output := scanImage(image, ctx, cli, cacheDir, json)
+			output := scanImage(image, ctx, cli, cacheDir, json, trivyOpts)
 			if json {
 				jsonOutput += output
 			} else {
@@ -115,11 +119,20 @@ func scanChart(chart string, json bool, ctx context.Context, cli *client.Client,
 func main() {
 	var jsonOutput bool
 	var noPull bool
-	var chart string
+	var chart string = ""
+	var trivyArgs = ""
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: helm trivy [options] <helm chart>\n")
+		fmt.Fprintf(os.Stderr, "Example: helm trivy -json stable/mariadb\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		flag.PrintDefaults()
+	}
 
 	flag.BoolVar(&jsonOutput, "json", false, "Enable JSON output")
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 	flag.BoolVar(&noPull, "nopull", false, "Don't pull latest trivy image")
+	flag.StringVar(&trivyArgs, "trivyargs", "", "CLI args to passthrough to trivy")
 	flag.Parse()
 
 	if debug {
@@ -132,6 +145,11 @@ func main() {
 		}
 		chart = v
 		break
+	}
+	if chart == "" {
+		fmt.Fprintf(os.Stderr, "Error: No chart specified.\n")
+		flag.Usage()
+		os.Exit(2)
 	}
 
 	ctx := context.Background()
@@ -164,5 +182,5 @@ func main() {
 		os.Exit(0)
 	}(cacheDir)
 
-	scanChart(chart, jsonOutput, ctx, cli, cacheDir)
+	scanChart(chart, jsonOutput, ctx, cli, cacheDir, trivyArgs)
 }
