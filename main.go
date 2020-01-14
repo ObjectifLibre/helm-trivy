@@ -131,6 +131,7 @@ func main() {
 
 	flag.BoolVar(&jsonOutput, "json", false, "Enable JSON output")
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
+
 	flag.BoolVar(&noPull, "nopull", false, "Don't pull latest trivy image")
 	flag.StringVar(&trivyArgs, "trivyargs", "", "CLI args to passthrough to trivy")
 	flag.Parse()
@@ -160,7 +161,7 @@ func main() {
 
 	if !noPull {
 		log.Info("Pulling latest trivy image")
-		_, err := cli.ImagePull(ctx, "aquasec/trivy:latest", types.ImagePullOptions{})
+		_, err := cli.ImagePull(ctx, "aquasec/trivy", types.ImagePullOptions{})
 		if err != nil {
 			panic(err)
 		}
