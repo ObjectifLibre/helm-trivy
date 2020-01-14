@@ -1,7 +1,5 @@
 #! /bin/bash -e
 
-echo toto
-
 version="$(cat plugin.yaml | grep "version" | cut -d '"' -f 2)"
 latest_version=$(curl -Is "https://github.com/ObjectifLibre/helm-trivy/releases/latest" | grep "Location" | cut -d'/' -f 8 | tr -d "\r")
 
