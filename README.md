@@ -20,14 +20,20 @@ Usage: helm trivy [options] <helm chart>
 Example: helm trivy -json stable/mariadb
 
 Options:
-  -debug
+  --debug
     	Enable debug logging
-  -json
+  --json
     	Enable JSON output
-  -nopull
+  --nopull
     	Don't pull latest trivy image
-  -trivyargs string
+  --set string
+    	Values to set for helm chart, format: 'key1=value1,key2=value2'
+  --trivyargs string
     	CLI args to passthrough to trivy
+  --values string
+    	Specify chart values in a YAML file or a URL
+  --version string
+    	Specify chart version
 ```
 
 Some examples:

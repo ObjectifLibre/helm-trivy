@@ -21,9 +21,21 @@ import (
 
 var debug = false
 
-func getChartImages(chart string) (error, []string) {
+func getChartImages(chart string, set string, values string, version string) (error, []string) {
 	images := []string{}
-	out, err := exec.Command("helm", "template", chart).Output()
+	cmd := []string{"template"}
+	if len(set) > 0 {
+		cmd = append(cmd, "--set", set)
+	}
+	if len(values) > 0 {
+		cmd = append(cmd, "--values", values)
+	}
+	if len(version) > 0 {
+		cmd = append(cmd, "--version", version)
+	}
+	cmd = append(cmd, chart)
+	log.Debugf("Running helm cmd: helm %v", cmd)
+	out, err := exec.Command("helm", cmd...).Output()
 	if err != nil {
 		return err, images
 	}
@@ -91,10 +103,10 @@ func scanImage(image string, ctx context.Context, cli *client.Client, cacheDir s
 	return string(outputContent)
 }
 
-func scanChart(chart string, json bool, ctx context.Context, cli *client.Client, cacheDir string, trivyOpts string) {
+func scanChart(chart string, json bool, ctx context.Context, cli *client.Client, cacheDir string, trivyOpts string, templateSet string, templateValues string, chartversion string) {
 	log.Infof("Scanning chart %s", chart)
 	jsonOutput := ""
-	if err, images := getChartImages(chart); err != nil {
+	if err, images := getChartImages(chart, templateSet, templateValues, chartversion); err != nil {
 		log.Fatalf("Could not find images for chart %v: %v. Did you run 'helm repo update' ?", chart, err)
 	} else {
 		if len(images) == 0 {
@@ -120,6 +132,9 @@ func main() {
 	var jsonOutput bool
 	var noPull bool
 	var chart string = ""
+	var templateSet = ""
+	var templateValues = ""
+	var chartVersion = ""
 	var trivyArgs = ""
 
 	flag.Usage = func() {
@@ -131,26 +146,23 @@ func main() {
 
 	flag.BoolVar(&jsonOutput, "json", false, "Enable JSON output")
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
-
 	flag.BoolVar(&noPull, "nopull", false, "Don't pull latest trivy image")
 	flag.StringVar(&trivyArgs, "trivyargs", "", "CLI args to passthrough to trivy")
+	flag.StringVar(&templateSet, "set", "", "Values to set for helm chart, format: 'key1=value1,key2=value2'")
+	flag.StringVar(&templateValues, "values", "", "Specify chart values in a YAML file or a URL")
+	flag.StringVar(&chartVersion, "version", "", "Specify chart version")
 	flag.Parse()
 
 	if debug {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	for _, v := range os.Args[1:] {
-		if strings.HasPrefix(v, "-") {
-			continue
-		}
-		chart = v
-		break
-	}
-	if chart == "" {
+	if len(flag.Args()) == 0 {
 		fmt.Fprintf(os.Stderr, "Error: No chart specified.\n")
 		flag.Usage()
 		os.Exit(2)
+	} else {
+		chart = flag.Args()[0]
 	}
 
 	ctx := context.Background()
@@ -183,5 +195,5 @@ func main() {
 		os.Exit(0)
 	}(cacheDir)
 
-	scanChart(chart, jsonOutput, ctx, cli, cacheDir, trivyArgs)
+	scanChart(chart, jsonOutput, ctx, cli, cacheDir, trivyArgs, templateSet, templateValues, chartVersion)
 }

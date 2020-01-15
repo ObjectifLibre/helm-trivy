@@ -1,6 +1,6 @@
 ---
 name: "trivy"
-version: "0.1.1"
+version: "0.1.2"
 usage: "Check images in your charts for vulnerabilities"
 description: |-
   "Test your helm charts' docker images with trivy"
